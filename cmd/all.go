@@ -104,7 +104,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 	log.Info("spaces to scan", "count", len(spaces))
 	fmt.Printf("Scanning %d spaces...\n\n", len(spaces))
 
-	pages := make(chan confluence.PageResult, 100)
+	pages := make(chan confluence.PageStub, 100)
 
 	// Monitor for timeout/cancellation and notify the user.
 	go func() {

@@ -37,9 +37,28 @@ type PageResult struct {
 	} `json:"_links"`
 }
 
-// SearchCQL performs a CQL search and returns all matching pages, handling pagination.
-func (c *Client) SearchCQL(ctx context.Context, cql string, limit int) ([]PageResult, error) {
-	var all []PageResult
+// PageStub is a lightweight reference to a page without the body content.
+// Used in channels to avoid holding large HTML bodies in memory while queued.
+type PageStub struct {
+	ID       string
+	Title    string
+	SpaceKey string
+	WebUI    string
+}
+
+func (p PageResult) ToStub() PageStub {
+	return PageStub{
+		ID:       p.ID,
+		Title:    p.Title,
+		SpaceKey: p.Space.Key,
+		WebUI:    p.Links.WebUI,
+	}
+}
+
+// SearchCQL performs a CQL search and returns lightweight page stubs, handling pagination.
+// Bodies are NOT fetched here — workers fetch them on demand to control memory.
+func (c *Client) SearchCQL(ctx context.Context, cql string, limit int) ([]PageStub, error) {
+	var all []PageStub
 	start := 0
 	pageSize := 25
 	if limit > 0 && limit < pageSize {
@@ -47,7 +66,7 @@ func (c *Client) SearchCQL(ctx context.Context, cql string, limit int) ([]PageRe
 	}
 
 	for {
-		path := fmt.Sprintf("/rest/api/content/search?cql=%s&start=%d&limit=%d&expand=body.storage,space,version",
+		path := fmt.Sprintf("/rest/api/content/search?cql=%s&start=%d&limit=%d&expand=space",
 			url.QueryEscape(cql), start, pageSize)
 
 		var result SearchResult
@@ -55,7 +74,9 @@ func (c *Client) SearchCQL(ctx context.Context, cql string, limit int) ([]PageRe
 			return all, fmt.Errorf("search CQL (start=%d): %w", start, err)
 		}
 
-		all = append(all, result.Results...)
+		for _, r := range result.Results {
+			all = append(all, r.ToStub())
+		}
 		c.log.Info("search page fetched", "returned", result.Size, "total_so_far", len(all))
 
 		if result.Size < pageSize || result.Links.Next == "" {

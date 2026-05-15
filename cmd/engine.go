@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,18 +17,22 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+func init() {
+	debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2GB hard cap on Go heap
+}
+
 type ScanStats struct {
 	PagesScanned      atomic.Int64
 	AttachmentsParsed atomic.Int64
 }
 
-// scanPages reads pages from the channel and scans each one (body + attachments).
-// attachMem is a weighted semaphore that caps total in-flight attachment bytes
-// across all workers to prevent OOM.
+// scanPages reads lightweight page stubs from the channel. Each worker fetches
+// the full page body on demand so only N workers (not the entire channel buffer)
+// hold page HTML in memory at any time.
 func scanPages(
 	ctx context.Context,
 	client *confluence.Client,
-	pages <-chan confluence.PageResult,
+	pages <-chan confluence.PageStub,
 	patterns []scanner.CompiledPattern,
 	store *findings.Store,
 	writer *findings.JSONLWriter,
@@ -47,11 +51,11 @@ func scanPages(
 				select {
 				case <-ctx.Done():
 					return
-				case page, ok := <-pages:
+				case stub, ok := <-pages:
 					if !ok {
 						return
 					}
-					processPage(ctx, client, page, patterns, store, writer, stats, log, workerID, attachMem)
+					processPage(ctx, client, stub, patterns, store, writer, stats, log, workerID, attachMem)
 				}
 			}
 		}(i)
@@ -63,7 +67,7 @@ func scanPages(
 func processPage(
 	ctx context.Context,
 	client *confluence.Client,
-	page confluence.PageResult,
+	stub confluence.PageStub,
 	patterns []scanner.CompiledPattern,
 	store *findings.Store,
 	writer *findings.JSONLWriter,
@@ -73,27 +77,40 @@ func processPage(
 	attachMem *semaphore.Weighted,
 ) {
 	stats.PagesScanned.Add(1)
-	pageURL := client.BaseURL() + page.Links.WebUI
+	pageURL := client.BaseURL() + stub.WebUI
 
 	log.Info("scanning page",
 		"worker", workerID,
-		"page_id", page.ID,
-		"title", page.Title,
-		"space", page.Space.Key,
+		"page_id", stub.ID,
+		"title", stub.Title,
+		"space", stub.SpaceKey,
 	)
 
 	loc := findings.Location{
-		SpaceKey:  page.Space.Key,
-		PageID:    page.ID,
-		PageTitle: page.Title,
+		SpaceKey:  stub.SpaceKey,
+		PageID:    stub.ID,
+		PageTitle: stub.Title,
 		PageURL:   pageURL,
 		Source:    "body",
 	}
 
-	bodyText := stripHTML(page.Body.Storage.Value)
-	inCodeBlock := strings.Contains(page.Body.Storage.Value, "<ac:structured-macro ac:name=\"code\"") ||
-		strings.Contains(page.Body.Storage.Value, "<pre>") ||
-		strings.Contains(page.Body.Storage.Value, "<code>")
+	// Fetch the full page body on demand — only this worker holds it in memory.
+	page, err := client.GetPage(ctx, stub.ID)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Warn("fetch page body failed", "page_id", stub.ID, "error", err)
+		}
+		return
+	}
+
+	bodyHTML := page.Body.Storage.Value
+	bodyText := stripHTML(bodyHTML)
+	inCodeBlock := strings.Contains(bodyHTML, "<ac:structured-macro ac:name=\"code\"") ||
+		strings.Contains(bodyHTML, "<pre>") ||
+		strings.Contains(bodyHTML, "<code>")
+
+	// Drop the raw HTML reference now that we have the stripped text.
+	page = nil
 
 	matches := scanner.Scan(patterns, bodyText, inCodeBlock)
 	for _, m := range matches {
@@ -120,7 +137,7 @@ func processPage(
 		return
 	}
 
-	scanAttachments(ctx, client, page.ID, patterns, store, writer, stats, loc, log, attachMem)
+	scanAttachments(ctx, client, stub.ID, patterns, store, writer, stats, loc, log, attachMem)
 }
 
 func scanAttachments(
@@ -151,7 +168,7 @@ func scanAttachments(
 
 		fileSize := att.Extensions.FileSize
 		if fileSize <= 0 {
-			fileSize = 1024 * 1024 // assume 1MB if unknown
+			fileSize = 1024 * 1024
 		}
 		if fileSize > flagMaxAttachSize {
 			log.Debug("skipping large attachment",
@@ -162,10 +179,8 @@ func scanAttachments(
 			continue
 		}
 
-		// Acquire memory budget before downloading. This blocks if other
-		// workers are already using the memory cap, preventing OOM.
 		if err := attachMem.Acquire(ctx, fileSize); err != nil {
-			return // context cancelled
+			return
 		}
 
 		data, err := client.DownloadAttachment(ctx, att.Links.Download)
@@ -184,10 +199,8 @@ func scanAttachments(
 			text, err = parser.ExtractPDF(data)
 		}
 
-		// Release the raw file bytes immediately — we only need the text now.
 		data = nil
 		attachMem.Release(fileSize)
-		runtime.GC()
 
 		if err != nil {
 			log.Warn("parse attachment failed", "file", att.Title, "error", err)
@@ -222,7 +235,6 @@ func scanAttachments(
 	}
 }
 
-// stripHTML is a simple HTML tag stripper for Confluence storage format.
 func stripHTML(s string) string {
 	var b strings.Builder
 	inTag := false

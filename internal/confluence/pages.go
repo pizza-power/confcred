@@ -26,8 +26,9 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (*PageResult, error
 	return &page, nil
 }
 
-// GetSpacePages paginates through all pages in a space, sending each batch to the provided channel.
-func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<- PageResult) error {
+// GetSpacePages paginates through all pages in a space, sending lightweight stubs to the channel.
+// Bodies are NOT fetched here — workers fetch them on demand to control memory.
+func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<- PageStub) error {
 	start := 0
 	pageSize := 25
 
@@ -39,7 +40,7 @@ func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<
 		}
 
 		cql := fmt.Sprintf(`space="%s" AND type=page`, spaceKey)
-		path := fmt.Sprintf("/rest/api/content/search?cql=%s&start=%d&limit=%d&expand=body.storage,space,version",
+		path := fmt.Sprintf("/rest/api/content/search?cql=%s&start=%d&limit=%d&expand=space",
 			url.QueryEscape(cql), start, pageSize)
 
 		var result PageListResult
@@ -51,7 +52,7 @@ func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case pages <- p:
+			case pages <- p.ToStub():
 			}
 		}
 

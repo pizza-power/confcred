@@ -112,7 +112,10 @@ func (c *Client) getJSON(ctx context.Context, path string, target interface{}) e
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	return json.NewDecoder(resp.Body).Decode(target)
 }

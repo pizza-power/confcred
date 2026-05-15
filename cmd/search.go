@@ -67,17 +67,17 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	log.Info("executing CQL", "cql", cql)
 
-	results, err := client.SearchCQL(ctx, cql, 0)
+	stubs, err := client.SearchCQL(ctx, cql, 0)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	log.Info("search returned pages", "count", len(results))
-	fmt.Printf("Found %d pages matching query, scanning...\n\n", len(results))
+	log.Info("search returned pages", "count", len(stubs))
+	fmt.Printf("Found %d pages matching query, scanning...\n\n", len(stubs))
 
-	pages := make(chan confluence.PageResult, len(results))
-	for _, r := range results {
-		pages <- r
+	pages := make(chan confluence.PageStub, len(stubs))
+	for _, s := range stubs {
+		pages <- s
 	}
 	close(pages)
 
