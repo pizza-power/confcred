@@ -2,6 +2,7 @@ package confluence
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ type ClientConfig struct {
 	Pass      string // basic auth
 	RateLimit float64
 	Timeout   time.Duration
+	Insecure  bool
 }
 
 type Client struct {
@@ -49,10 +51,16 @@ func NewClient(cfg ClientConfig) *Client {
 	if rl <= 0 {
 		rl = 10
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if cfg.Insecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
 	return &Client{
 		baseURL: baseURL,
 		httpClient: &http.Client{
-			Timeout: cfg.Timeout,
+			Timeout:   cfg.Timeout,
+			Transport: transport,
 		},
 		authMode: cfg.AuthMode,
 		token:    cfg.Token,

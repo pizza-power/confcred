@@ -26,6 +26,7 @@ var (
 	flagOutput           string
 	flagLogFile          string
 	flagVerbose          bool
+	flagInsecure         bool
 )
 
 var rootCmd = &cobra.Command{
@@ -85,6 +86,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagOutput, "output", "findings.jsonl", "Output file path for JSONL findings")
 	rootCmd.PersistentFlags().StringVar(&flagLogFile, "log-file", "confcred.log", "Log file path")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "Enable debug-level logging")
+	rootCmd.PersistentFlags().BoolVar(&flagInsecure, "insecure", false, "Skip TLS certificate verification")
 }
 
 func newConfluenceClient() *confluence.Client {
@@ -92,6 +94,7 @@ func newConfluenceClient() *confluence.Client {
 		BaseURL:   flagURL,
 		RateLimit: flagRateLimit,
 		Timeout:   30 * time.Second,
+		Insecure:  flagInsecure,
 	}
 	if flagToken != "" {
 		cfg.AuthMode = confluence.AuthPAT
