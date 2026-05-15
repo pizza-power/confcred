@@ -23,6 +23,7 @@ var (
 	flagWorkers          int
 	flagRateLimit        float64
 	flagMaxAttachSize    int64
+	flagMaxMemory        int64
 	flagOutput           string
 	flagLogFile          string
 	flagReport           string
@@ -83,7 +84,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagExcludeSpaces, "exclude-spaces", "", "Comma-separated space keys to exclude")
 	rootCmd.PersistentFlags().IntVar(&flagWorkers, "workers", 5, "Number of concurrent page fetch workers")
 	rootCmd.PersistentFlags().Float64Var(&flagRateLimit, "rate-limit", 10, "Max API requests per second")
-	rootCmd.PersistentFlags().Int64Var(&flagMaxAttachSize, "max-attachment-size", 50*1024*1024, "Max attachment size in bytes to download (default 50MB)")
+	rootCmd.PersistentFlags().Int64Var(&flagMaxAttachSize, "max-attachment-size", 20*1024*1024, "Max attachment size in bytes to download (default 20MB)")
+	rootCmd.PersistentFlags().Int64Var(&flagMaxMemory, "max-memory", 256*1024*1024, "Max memory for in-flight attachment processing across all workers (default 256MB)")
 	rootCmd.PersistentFlags().StringVar(&flagOutput, "output", "findings.jsonl", "Output file path for JSONL findings")
 	rootCmd.PersistentFlags().StringVar(&flagLogFile, "log-file", "confcred.log", "Log file path")
 	rootCmd.PersistentFlags().StringVar(&flagReport, "report", "report.html", "HTML report output path")

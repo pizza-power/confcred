@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,8 @@ import (
 	"confcred/internal/logging"
 	"confcred/internal/parser"
 	"confcred/internal/scanner"
+
+	"golang.org/x/sync/semaphore"
 )
 
 type ScanStats struct {
@@ -20,6 +23,8 @@ type ScanStats struct {
 }
 
 // scanPages reads pages from the channel and scans each one (body + attachments).
+// attachMem is a weighted semaphore that caps total in-flight attachment bytes
+// across all workers to prevent OOM.
 func scanPages(
 	ctx context.Context,
 	client *confluence.Client,
@@ -31,6 +36,7 @@ func scanPages(
 	workers int,
 ) {
 	log := logging.Get()
+	attachMem := semaphore.NewWeighted(flagMaxMemory)
 	var wg sync.WaitGroup
 
 	for i := 0; i < workers; i++ {
@@ -45,7 +51,7 @@ func scanPages(
 					if !ok {
 						return
 					}
-					processPage(ctx, client, page, patterns, store, writer, stats, log, workerID)
+					processPage(ctx, client, page, patterns, store, writer, stats, log, workerID, attachMem)
 				}
 			}
 		}(i)
@@ -64,6 +70,7 @@ func processPage(
 	stats *ScanStats,
 	log *slog.Logger,
 	workerID int,
+	attachMem *semaphore.Weighted,
 ) {
 	stats.PagesScanned.Add(1)
 	pageURL := client.BaseURL() + page.Links.WebUI
@@ -113,7 +120,7 @@ func processPage(
 		return
 	}
 
-	scanAttachments(ctx, client, page.ID, patterns, store, writer, stats, loc, log)
+	scanAttachments(ctx, client, page.ID, patterns, store, writer, stats, loc, log, attachMem)
 }
 
 func scanAttachments(
@@ -126,6 +133,7 @@ func scanAttachments(
 	stats *ScanStats,
 	baseLoc findings.Location,
 	log *slog.Logger,
+	attachMem *semaphore.Weighted,
 ) {
 	attachments, err := client.GetAttachments(ctx, pageID)
 	if err != nil {
@@ -140,17 +148,29 @@ func scanAttachments(
 		if !confluence.IsParseable(att.Title) {
 			continue
 		}
-		if att.Extensions.FileSize > flagMaxAttachSize {
+
+		fileSize := att.Extensions.FileSize
+		if fileSize <= 0 {
+			fileSize = 1024 * 1024 // assume 1MB if unknown
+		}
+		if fileSize > flagMaxAttachSize {
 			log.Debug("skipping large attachment",
 				"file", att.Title,
-				"size", att.Extensions.FileSize,
+				"size", fileSize,
 				"max", flagMaxAttachSize,
 			)
 			continue
 		}
 
+		// Acquire memory budget before downloading. This blocks if other
+		// workers are already using the memory cap, preventing OOM.
+		if err := attachMem.Acquire(ctx, fileSize); err != nil {
+			return // context cancelled
+		}
+
 		data, err := client.DownloadAttachment(ctx, att.Links.Download)
 		if err != nil {
+			attachMem.Release(fileSize)
 			log.Warn("download attachment failed", "file", att.Title, "error", err)
 			continue
 		}
@@ -163,6 +183,12 @@ func scanAttachments(
 		case strings.HasSuffix(lower, ".pdf"):
 			text, err = parser.ExtractPDF(data)
 		}
+
+		// Release the raw file bytes immediately — we only need the text now.
+		data = nil
+		attachMem.Release(fileSize)
+		runtime.GC()
+
 		if err != nil {
 			log.Warn("parse attachment failed", "file", att.Title, "error", err)
 			continue
