@@ -1,0 +1,134 @@
+patterns:
+  # Cloud provider keys
+  - name: "AWS Access Key"
+    regex: '(?:^|[^A-Za-z0-9/+=])(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}(?:[^A-Za-z0-9/+=]|$)'
+    severity: critical
+    confidence_boost: 30
+  - name: "AWS Secret Key"
+    regex: '(?i)(?:aws_secret_access_key|aws_secret)\s*[:=]\s*[A-Za-z0-9/+=]{40}'
+    severity: critical
+    confidence_boost: 30
+  - name: "GCP Service Account"
+    regex: '"type"\s*:\s*"service_account"'
+    severity: critical
+    confidence_boost: 25
+  - name: "Azure Client Secret"
+    regex: '(?i)(?:azure[_-]?client[_-]?secret|AZURE_CLIENT_SECRET)\s*[:=]\s*\S{20,}'
+    severity: critical
+    confidence_boost: 20
+
+  # Private keys
+  - name: "RSA Private Key"
+    regex: '-----BEGIN\s(?:RSA\s)?PRIVATE\sKEY-----'
+    severity: critical
+    confidence_boost: 40
+  - name: "EC Private Key"
+    regex: '-----BEGIN\sEC\sPRIVATE\sKEY-----'
+    severity: critical
+    confidence_boost: 40
+  - name: "OpenSSH Private Key"
+    regex: '-----BEGIN\sOPENSSH\sPRIVATE\sKEY-----'
+    severity: critical
+    confidence_boost: 40
+  - name: "PGP Private Key"
+    regex: '-----BEGIN\sPGP\sPRIVATE\sKEY\sBLOCK-----'
+    severity: critical
+    confidence_boost: 40
+
+  # Platform tokens
+  - name: "GitHub PAT"
+    regex: 'ghp_[A-Za-z0-9]{36}'
+    severity: high
+    confidence_boost: 30
+  - name: "GitHub OAuth"
+    regex: 'gho_[A-Za-z0-9]{36}'
+    severity: high
+    confidence_boost: 30
+  - name: "GitLab Token"
+    regex: 'glpat-[A-Za-z0-9\-]{20,}'
+    severity: high
+    confidence_boost: 30
+  - name: "Slack Bot Token"
+    regex: 'xoxb-[0-9]{10,}-[0-9]{10,}-[A-Za-z0-9]{24,}'
+    severity: high
+    confidence_boost: 25
+  - name: "Slack User Token"
+    regex: 'xoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[a-f0-9]{32}'
+    severity: high
+    confidence_boost: 25
+  - name: "Slack Webhook"
+    regex: 'https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+'
+    severity: high
+    confidence_boost: 25
+
+  # Connection strings
+  - name: "JDBC Connection String"
+    regex: 'jdbc:[a-z]+://[^\s"'']+:[^\s"'']+@[^\s"'']+'
+    severity: critical
+    confidence_boost: 20
+  - name: "MongoDB URI"
+    regex: 'mongodb(?:\+srv)?://[^\s"'']+:[^\s"'']+@[^\s"'']+'
+    severity: critical
+    confidence_boost: 25
+  - name: "PostgreSQL URI"
+    regex: 'postgres(?:ql)?://[^\s"'']+:[^\s"'']+@[^\s"'']+'
+    severity: critical
+    confidence_boost: 25
+  - name: "MySQL URI"
+    regex: 'mysql://[^\s"'']+:[^\s"'']+@[^\s"'']+'
+    severity: critical
+    confidence_boost: 25
+  - name: "Redis URI"
+    regex: 'redis(?:s)?://[^\s"'']*:[^\s"'']+@[^\s"'']+'
+    severity: high
+    confidence_boost: 20
+  - name: "SMTP Credentials"
+    regex: '(?i)smtp://[^\s"'']+:[^\s"'']+@[^\s"'']+'
+    severity: high
+    confidence_boost: 20
+
+  # Generic secret patterns
+  - name: "Generic Password Assignment"
+    regex: '(?i)(?:password|passwd|pwd)\s*[:=]\s*["'']?[^\s"'']{8,}["'']?'
+    severity: medium
+    confidence_boost: 0
+  - name: "Generic Secret Assignment"
+    regex: '(?i)(?:secret|secret_key|secretkey)\s*[:=]\s*["'']?[^\s"'']{8,}["'']?'
+    severity: medium
+    confidence_boost: 0
+  - name: "Generic API Key Assignment"
+    regex: '(?i)(?:api_key|apikey|api-key)\s*[:=]\s*["'']?[^\s"'']{16,}["'']?'
+    severity: medium
+    confidence_boost: 0
+  - name: "Generic Token Assignment"
+    regex: '(?i)(?:token|auth_token|access_token)\s*[:=]\s*["'']?[^\s"'']{16,}["'']?'
+    severity: medium
+    confidence_boost: 0
+  - name: "Bearer Token"
+    regex: '(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*'
+    severity: medium
+    confidence_boost: 10
+
+  # Hashes
+  - name: "Bcrypt Hash"
+    regex: '\$2[aby]?\$\d{2}\$[./A-Za-z0-9]{53}'
+    severity: low
+    confidence_boost: 10
+
+  # Other high-value
+  - name: "Heroku API Key"
+    regex: '(?i)heroku[_-]?api[_-]?key\s*[:=]\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    severity: high
+    confidence_boost: 20
+  - name: "SendGrid API Key"
+    regex: 'SG\.[A-Za-z0-9\-_]{22}\.[A-Za-z0-9\-_]{43}'
+    severity: high
+    confidence_boost: 30
+  - name: "Twilio API Key"
+    regex: 'SK[0-9a-fA-F]{32}'
+    severity: high
+    confidence_boost: 15
+  - name: "Stripe Secret Key"
+    regex: 'sk_live_[A-Za-z0-9]{24,}'
+    severity: critical
+    confidence_boost: 35

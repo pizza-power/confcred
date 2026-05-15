@@ -1,0 +1,22 @@
+# Binary
+confcred
+
+# Environment
+.env
+
+# Output files
+*.jsonl
+confcred.log
+
+# Go
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
