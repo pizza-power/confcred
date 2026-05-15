@@ -84,7 +84,18 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	scanPages(ctx, client, pages, patterns, store, writer, stats, flagWorkers)
 
 	elapsed := time.Since(start)
-	findings.PrintSummary(store, int(stats.PagesScanned.Load()), int(stats.AttachmentsParsed.Load()), elapsed)
+	pagesCount := int(stats.PagesScanned.Load())
+	attachCount := int(stats.AttachmentsParsed.Load())
+
+	findings.PrintSummary(store, pagesCount, attachCount, elapsed)
+
+	if flagReport != "" {
+		if err := findings.WriteHTMLReport(flagReport, store, pagesCount, attachCount, elapsed); err != nil {
+			log.Error("write HTML report", "error", err)
+		} else {
+			fmt.Printf("  Report written to %s\n", flagReport)
+		}
+	}
 
 	log.Info("search scan complete",
 		"elapsed", elapsed.String(),

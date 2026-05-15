@@ -106,16 +106,26 @@ func runAll(cmd *cobra.Command, args []string) error {
 
 	pages := make(chan confluence.PageResult, 100)
 
+	// Monitor for timeout/cancellation and notify the user.
+	go func() {
+		<-ctx.Done()
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Printf("\n⏱ Timeout reached, shutting down gracefully...\n")
+			log.Warn("timeout reached, stopping scan")
+		} else {
+			fmt.Printf("\nInterrupted, shutting down gracefully...\n")
+			log.Warn("scan interrupted by signal")
+		}
+	}()
+
 	var producerWg sync.WaitGroup
 	producerWg.Add(1)
 	go func() {
 		defer producerWg.Done()
 		defer close(pages)
 		for _, space := range spaces {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
-			default:
 			}
 			log.Info("crawling space", "space", space.Key, "name", space.Name)
 			fmt.Printf("Crawling space: %s (%s)\n", space.Key, space.Name)
@@ -132,7 +142,18 @@ func runAll(cmd *cobra.Command, args []string) error {
 	producerWg.Wait()
 
 	elapsed := time.Since(start)
-	findings.PrintSummary(store, int(stats.PagesScanned.Load()), int(stats.AttachmentsParsed.Load()), elapsed)
+	pagesCount := int(stats.PagesScanned.Load())
+	attachCount := int(stats.AttachmentsParsed.Load())
+
+	findings.PrintSummary(store, pagesCount, attachCount, elapsed)
+
+	if flagReport != "" {
+		if err := findings.WriteHTMLReport(flagReport, store, pagesCount, attachCount, elapsed); err != nil {
+			log.Error("write HTML report", "error", err)
+		} else {
+			fmt.Printf("  Report written to %s\n", flagReport)
+		}
+	}
 
 	log.Info("full crawl complete",
 		"elapsed", elapsed.String(),

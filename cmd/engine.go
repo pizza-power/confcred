@@ -109,6 +109,10 @@ func processPage(
 		}
 	}
 
+	if ctx.Err() != nil {
+		return
+	}
+
 	scanAttachments(ctx, client, page.ID, patterns, store, writer, stats, loc, log)
 }
 
@@ -130,6 +134,9 @@ func scanAttachments(
 	}
 
 	for _, att := range attachments {
+		if ctx.Err() != nil {
+			return
+		}
 		if !confluence.IsParseable(att.Title) {
 			continue
 		}

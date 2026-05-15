@@ -6,6 +6,7 @@ confcred
 
 # Output files
 *.jsonl
+*.html
 confcred.log
 
 # Go

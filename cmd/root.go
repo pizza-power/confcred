@@ -25,6 +25,7 @@ var (
 	flagMaxAttachSize    int64
 	flagOutput           string
 	flagLogFile          string
+	flagReport           string
 	flagVerbose          bool
 	flagInsecure         bool
 )
@@ -85,6 +86,7 @@ func init() {
 	rootCmd.PersistentFlags().Int64Var(&flagMaxAttachSize, "max-attachment-size", 50*1024*1024, "Max attachment size in bytes to download (default 50MB)")
 	rootCmd.PersistentFlags().StringVar(&flagOutput, "output", "findings.jsonl", "Output file path for JSONL findings")
 	rootCmd.PersistentFlags().StringVar(&flagLogFile, "log-file", "confcred.log", "Log file path")
+	rootCmd.PersistentFlags().StringVar(&flagReport, "report", "report.html", "HTML report output path")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "Enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagInsecure, "insecure", false, "Skip TLS certificate verification")
 }
