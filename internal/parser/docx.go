@@ -53,13 +53,16 @@ func ExtractDOCX(data []byte) (string, error) {
 }
 
 func extractXMLText(f *zip.File) (string, error) {
+	// Protect against zip bombs: cap decompressed read at 50MB per internal file.
+	const maxDecompressed = 50 * 1024 * 1024
+
 	rc, err := f.Open()
 	if err != nil {
 		return "", err
 	}
 	defer rc.Close()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxDecompressed))
 	if err != nil {
 		return "", err
 	}

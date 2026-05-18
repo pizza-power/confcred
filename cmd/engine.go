@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -18,7 +19,10 @@ import (
 )
 
 func init() {
-	debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2GB hard cap on Go heap
+	// GOGC=50 makes GC run more frequently, trading CPU for lower peak RSS.
+	debug.SetGCPercent(50)
+	// Soft heap limit — keeps the GC aggressive but won't prevent necessary allocs.
+	debug.SetMemoryLimit(4 * 1024 * 1024 * 1024) // 4GB
 }
 
 type ScanStats struct {
@@ -107,6 +111,18 @@ func processPage(
 	bodyHTML := strings.Clone(page.Body.Storage.Value)
 	page = nil
 
+	// Skip absurdly large pages — regex on multi-MB strings consumes
+	// many times the string size in memory for match tracking.
+	const maxBodyScan = 5 * 1024 * 1024 // 5MB
+	if len(bodyHTML) > maxBodyScan {
+		log.Warn("page body too large, truncating for scan",
+			"page_id", stub.ID,
+			"size", len(bodyHTML),
+			"max", maxBodyScan,
+		)
+		bodyHTML = bodyHTML[:maxBodyScan]
+	}
+
 	bodyText := stripHTML(bodyHTML)
 	inCodeBlock := strings.Contains(bodyHTML, "<ac:structured-macro ac:name=\"code\"") ||
 		strings.Contains(bodyHTML, "<pre>") ||
@@ -139,6 +155,9 @@ func processPage(
 	// Release body text before attachment scanning — no longer needed.
 	bodyText = ""
 	matches = nil
+
+	// Hint to the runtime that we just freed significant memory.
+	runtime.GC()
 
 	if ctx.Err() != nil {
 		return
@@ -243,18 +262,19 @@ func scanAttachments(
 }
 
 func stripHTML(s string) string {
-	var b strings.Builder
+	b := make([]byte, 0, len(s))
 	inTag := false
-	for _, r := range s {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
 		switch {
-		case r == '<':
+		case c == '<':
 			inTag = true
-		case r == '>':
+		case c == '>':
 			inTag = false
-			b.WriteRune(' ')
+			b = append(b, ' ')
 		case !inTag:
-			b.WriteRune(r)
+			b = append(b, c)
 		}
 	}
-	return b.String()
+	return string(b)
 }

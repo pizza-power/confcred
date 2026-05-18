@@ -17,13 +17,15 @@ type MatchResult struct {
 	Confidence int
 }
 
+const maxMatchesPerPattern = 50 // avoid regex explosion on noisy pages
+
 // Scan runs all compiled patterns against the given text and returns matches.
 // inCodeBlock boosts confidence when the match was found inside a code/preformatted context.
 func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResult {
 	var results []MatchResult
 
 	for _, p := range patterns {
-		matches := p.Regex.FindAllStringIndex(text, -1)
+		matches := p.Regex.FindAllStringIndex(text, maxMatchesPerPattern)
 		for _, loc := range matches {
 			value := strings.TrimSpace(text[loc[0]:loc[1]])
 			if len(value) == 0 {

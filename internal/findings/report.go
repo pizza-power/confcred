@@ -60,6 +60,8 @@ func WriteHTMLReport(path string, jsonlPath string, store *Store, pagesScanned, 
 	return reportTmpl.Execute(f, rd)
 }
 
+const maxReportFindings = 10000 // cap findings embedded in HTML to keep file + memory sane
+
 func readFindingsFromJSONL(path string) ([]byte, int, map[Severity]int, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -67,7 +69,8 @@ func readFindingsFromJSONL(path string) ([]byte, int, map[Severity]int, error) {
 	}
 	defer f.Close()
 
-	var allFindings []json.RawMessage
+	var included []json.RawMessage
+	total := 0
 	counts := make(map[Severity]int)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 10*1024*1024)
@@ -77,23 +80,30 @@ func readFindingsFromJSONL(path string) ([]byte, int, map[Severity]int, error) {
 		if len(line) == 0 {
 			continue
 		}
-		allFindings = append(allFindings, append(json.RawMessage{}, line...))
+		total++
 
 		var partial struct {
 			Severity Severity `json:"severity"`
 		}
 		json.Unmarshal(line, &partial)
 		counts[partial.Severity]++
+
+		if len(included) < maxReportFindings {
+			included = append(included, append(json.RawMessage{}, line...))
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, 0, nil, err
 	}
 
-	data, err := json.Marshal(allFindings)
+	data, err := json.Marshal(included)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	return data, len(allFindings), counts, nil
+	// Free the intermediate slice immediately.
+	included = nil
+
+	return data, total, counts, nil
 }
 
 var reportTmpl = template.Must(template.New("report").Parse(`<!DOCTYPE html>

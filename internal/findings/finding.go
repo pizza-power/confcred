@@ -46,6 +46,7 @@ func GenerateID(pattern, value, pageID, source, attachment string) string {
 const (
 	MaxValueLen   = 200
 	MaxContextLen = 300
+	MaxSeenIDs    = 500000 // cap the dedup map to prevent unbounded growth
 )
 
 type Store struct {
@@ -54,6 +55,7 @@ type Store struct {
 	findings    []Finding
 	maxFindings int
 	capped      bool
+	seenCapped  bool
 }
 
 func NewStore(maxFindings int) *Store {
@@ -71,6 +73,8 @@ func NewStore(maxFindings int) *Store {
 // Findings are truncated at ingestion to bound memory. After MaxFindings is
 // reached, dedup still works but findings are no longer stored in memory
 // (they should still be written to the JSONL file by the caller).
+// Once the dedup map exceeds MaxSeenIDs, all new findings are treated as unique
+// to prevent unbounded map growth.
 func (s *Store) Add(f Finding) bool {
 	if len(f.Value) > MaxValueLen {
 		f.Value = f.Value[:MaxValueLen] + "..."
@@ -81,10 +85,17 @@ func (s *Store) Add(f Finding) bool {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.seen[f.ID]; exists {
-		return false
+
+	// If the dedup map is within bounds, check for duplicates.
+	if len(s.seen) < MaxSeenIDs {
+		if _, exists := s.seen[f.ID]; exists {
+			return false
+		}
+		s.seen[f.ID] = struct{}{}
+	} else if !s.seenCapped {
+		s.seenCapped = true
 	}
-	s.seen[f.ID] = struct{}{}
+
 	if len(s.findings) < s.maxFindings {
 		s.findings = append(s.findings, f)
 	} else if !s.capped {

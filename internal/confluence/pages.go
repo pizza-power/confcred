@@ -17,10 +17,11 @@ type PageListResult struct {
 }
 
 // GetPage fetches a single page by ID with body content expanded.
+// The response is capped at the client's maxPageBody to prevent OOM on huge pages.
 func (c *Client) GetPage(ctx context.Context, pageID string) (*PageResult, error) {
 	path := fmt.Sprintf("/rest/api/content/%s?expand=body.storage,space,version", pageID)
 	var page PageResult
-	if err := c.getJSON(ctx, path, &page); err != nil {
+	if err := c.getJSONLimited(ctx, path, &page, c.maxPageBody); err != nil {
 		return nil, fmt.Errorf("get page %s: %w", pageID, err)
 	}
 	return &page, nil
