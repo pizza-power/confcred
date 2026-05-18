@@ -23,10 +23,8 @@ import (
 )
 
 func init() {
-	// GOGC=20 makes GC run very frequently — aggressive but necessary to keep RSS low.
-	debug.SetGCPercent(20)
-	// Soft heap limit — keeps the GC aggressive about reclaiming.
-	debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2GB
+	debug.SetGCPercent(50)
+	debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2GB soft heap target
 }
 
 type ScanStats struct {
@@ -50,6 +48,13 @@ func scanPages(
 	log := logging.Get()
 	attachMem := semaphore.NewWeighted(flagMaxMemory)
 	var wg sync.WaitGroup
+
+	if parser.PDFAvailable() {
+		log.Info("PDF parsing enabled (pdftotext found)")
+	} else {
+		log.Warn("PDF parsing disabled — pdftotext not found. Install with: apt install poppler-utils")
+		fmt.Fprintf(os.Stderr, "  [warn] PDF parsing disabled — install poppler-utils for PDF support\n")
+	}
 
 	// Periodically log memory stats so we can observe growth.
 	go func() {
@@ -175,10 +180,6 @@ func processPage(
 	bodyText = ""
 	matches = nil
 
-	// Force GC AND return free pages to the OS immediately.
-	// runtime.GC() alone doesn't reduce RSS — FreeOSMemory does both.
-	debug.FreeOSMemory()
-
 	if ctx.Err() != nil {
 		return
 	}
@@ -186,13 +187,6 @@ func processPage(
 	scanAttachments(ctx, client, stub.ID, patterns, store, writer, stats, loc, log, attachMem)
 }
 
-// pdfMemoryMultiplier accounts for the fact that the PDF library internally
-// decompresses streams, allocating far more than the file size.
-const pdfMemoryMultiplier = 10
-
-// pdfGate serializes PDF parsing — only one PDF at a time because the
-// library's internal allocations are massive and unpredictable.
-var pdfGate = semaphore.NewWeighted(1)
 
 func scanAttachments(
 	ctx context.Context,
@@ -219,6 +213,10 @@ func scanAttachments(
 		if !confluence.IsParseable(att.Title) {
 			continue
 		}
+		// Skip PDFs entirely if pdftotext is not available.
+		if strings.HasSuffix(strings.ToLower(att.Title), ".pdf") && !parser.PDFAvailable() {
+			continue
+		}
 
 		fileSize := att.Extensions.FileSize
 		if fileSize <= 0 {
@@ -233,29 +231,13 @@ func scanAttachments(
 			continue
 		}
 
-		// For PDFs, account for the library's internal memory explosion.
-		isPDF := strings.HasSuffix(strings.ToLower(att.Title), ".pdf")
-		memWeight := fileSize
-		if isPDF {
-			memWeight = fileSize * pdfMemoryMultiplier
-		}
-		// Clamp to semaphore capacity so we don't deadlock on one huge file.
-		if memWeight > flagMaxMemory {
-			log.Debug("skipping attachment (estimated memory exceeds budget)",
-				"file", att.Title,
-				"estimated", memWeight,
-				"budget", flagMaxMemory,
-			)
-			continue
-		}
-
-		if err := attachMem.Acquire(ctx, memWeight); err != nil {
+		if err := attachMem.Acquire(ctx, fileSize); err != nil {
 			return
 		}
 
 		data, err := client.DownloadAttachment(ctx, att.Links.Download, flagMaxAttachSize)
 		if err != nil {
-			attachMem.Release(memWeight)
+			attachMem.Release(fileSize)
 			log.Warn("download attachment failed", "file", att.Title, "error", err)
 			continue
 		}
@@ -266,22 +248,11 @@ func scanAttachments(
 		case strings.HasSuffix(lower, ".docx"):
 			text, err = parser.ExtractDOCX(data)
 		case strings.HasSuffix(lower, ".pdf"):
-			// Serialize PDF parsing — the library allocates enormous internal state.
-			if pdfErr := pdfGate.Acquire(ctx, 1); pdfErr != nil {
-				data = nil
-				attachMem.Release(memWeight)
-				return
-			}
 			text, err = parser.ExtractPDF(data)
-			pdfGate.Release(1)
 		}
 
-		// Immediately drop the raw file data and release the semaphore.
 		data = nil
-		attachMem.Release(memWeight)
-
-		// Force return memory to OS after each attachment parse.
-		debug.FreeOSMemory()
+		attachMem.Release(fileSize)
 
 		if err != nil {
 			log.Warn("parse attachment failed", "file", att.Title, "error", err)

@@ -2,65 +2,97 @@ package parser
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"strings"
-
-	"github.com/ledongthuc/pdf"
+	"io"
+	"os/exec"
+	"time"
 )
 
-// ExtractPDF reads a PDF file from memory and returns its plain text content.
-// No temporary files are written to disk. Output is capped at 10MB.
-// Recovers from panics in the PDF library to prevent crashes on malformed files.
-func ExtractPDF(data []byte) (result string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("pdf parser panic: %v", r)
-		}
-	}()
+// pdftoTextAvailable is set at init time to indicate whether the pdftotext
+// binary (from poppler-utils) is installed and reachable on $PATH.
+var pdftoTextAvailable bool
 
-	reader := bytes.NewReader(data)
-	pdfReader, err := pdf.NewReader(reader, int64(len(data)))
-	if err != nil {
-		return "", fmt.Errorf("open pdf: %w", err)
+func init() {
+	_, err := exec.LookPath("pdftotext")
+	pdftoTextAvailable = err == nil
+}
+
+// PDFAvailable reports whether PDF extraction is supported on this system.
+func PDFAvailable() bool {
+	return pdftoTextAvailable
+}
+
+// ExtractPDF extracts plain text from a PDF by shelling out to pdftotext.
+// The PDF data is piped to stdin; text is read from stdout.
+// This keeps all PDF parsing memory in an isolated child process that is
+// freed completely on exit — no Go heap impact regardless of PDF complexity.
+func ExtractPDF(data []byte) (string, error) {
+	if !pdftoTextAvailable {
+		return "", fmt.Errorf("pdftotext not installed (apt install poppler-utils)")
 	}
 
-	numPages := pdfReader.NumPage()
-	if numPages == 0 {
-		return "", fmt.Errorf("pdf has no pages")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// pdftotext - - : read from stdin, write to stdout
+	cmd := exec.CommandContext(ctx, "pdftotext", "-", "-")
+	cmd.Stdin = bytes.NewReader(data)
+
+	var stdout bytes.Buffer
+	stdout.Grow(min(len(data), maxExtractedBytes))
+	cmd.Stdout = &stdout
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pdftotext failed: %w (stderr: %s)", err, stderr.String())
 	}
 
-	// Cap pages to avoid spending ages on huge PDFs.
-	const maxPDFPages = 200
-	if numPages > maxPDFPages {
-		numPages = maxPDFPages
-	}
-
-	var b strings.Builder
-	b.Grow(min(len(data), maxExtractedBytes))
-	for i := 1; i <= numPages; i++ {
-		page := pdfReader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			continue
-		}
-		b.WriteString(text)
-		b.WriteString("\n")
-
-		if b.Len() > maxExtractedBytes {
-			break
-		}
-	}
-
-	result = strings.TrimSpace(b.String())
-	if result == "" {
-		return "", fmt.Errorf("no extractable text in pdf")
-	}
+	result := stdout.String()
 	if len(result) > maxExtractedBytes {
 		result = result[:maxExtractedBytes]
+	}
+	// Free the buffer immediately.
+	stdout.Reset()
+
+	if len(result) == 0 {
+		return "", fmt.Errorf("no extractable text in pdf")
+	}
+	return result, nil
+}
+
+// ExtractPDFFromReader extracts text from a PDF read from the given reader.
+// Useful if data is already streaming rather than in a byte slice.
+func ExtractPDFFromReader(r io.Reader) (string, error) {
+	if !pdftoTextAvailable {
+		return "", fmt.Errorf("pdftotext not installed (apt install poppler-utils)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "pdftotext", "-", "-")
+	cmd.Stdin = r
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pdftotext failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	result := stdout.String()
+	if len(result) > maxExtractedBytes {
+		result = result[:maxExtractedBytes]
+	}
+
+	if len(result) == 0 {
+		return "", fmt.Errorf("no extractable text in pdf")
 	}
 	return result, nil
 }
