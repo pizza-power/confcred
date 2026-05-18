@@ -122,28 +122,31 @@ func (c *Client) getJSON(ctx context.Context, path string, target interface{}) e
 
 // getJSONLimited decodes a JSON response with an optional size cap.
 // If maxBytes > 0, responses exceeding that size are rejected before decoding.
+// When a limit is set, the connection is NOT drained on oversize responses —
+// it is simply closed to avoid wasting time reading gigabytes of unwanted data.
 func (c *Client) getJSONLimited(ctx context.Context, path string, target interface{}, maxBytes int64) error {
 	resp, err := c.do(ctx, http.MethodGet, path)
 	if err != nil {
 		return err
 	}
+
+	if maxBytes > 0 {
+		// Use a LimitReader. On success or failure, just close — don't drain
+		// potentially huge remaining response data through the network.
+		defer resp.Body.Close()
+		reader := io.LimitReader(resp.Body, maxBytes)
+		if err := json.NewDecoder(reader).Decode(target); err != nil {
+			return fmt.Errorf("decode JSON (response may exceed %d byte limit): %w", maxBytes, err)
+		}
+		return nil
+	}
+
+	// Unlimited path: drain fully to allow HTTP connection reuse.
 	defer func() {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 	}()
-
-	var reader io.Reader = resp.Body
-	if maxBytes > 0 {
-		reader = io.LimitReader(resp.Body, maxBytes)
-	}
-
-	if err := json.NewDecoder(reader).Decode(target); err != nil {
-		if maxBytes > 0 {
-			return fmt.Errorf("decode JSON (response may exceed %d byte limit): %w", maxBytes, err)
-		}
-		return err
-	}
-	return nil
+	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 func (c *Client) getRaw(ctx context.Context, path string, maxBytes int64) ([]byte, string, error) {

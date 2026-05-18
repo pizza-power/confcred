@@ -120,7 +120,8 @@ func processPage(
 			"size", len(bodyHTML),
 			"max", maxBodyScan,
 		)
-		bodyHTML = bodyHTML[:maxBodyScan]
+		// Clone the truncated slice so the full backing array can be freed.
+		bodyHTML = strings.Clone(bodyHTML[:maxBodyScan])
 	}
 
 	bodyText := stripHTML(bodyHTML)

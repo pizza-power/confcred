@@ -3,6 +3,7 @@ package findings
 import (
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -40,7 +41,11 @@ type Finding struct {
 func GenerateID(pattern, value, pageID, source, attachment string) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s|%s|%s|%s|%s", pattern, value, pageID, source, attachment)
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
+	sum := fmt.Sprintf("%x", h.Sum(nil))
+	// Return a copy, not a substring, to avoid pinning the full hash string.
+	id := make([]byte, 16)
+	copy(id, sum[:16])
+	return string(id)
 }
 
 const (
@@ -77,10 +82,11 @@ func NewStore(maxFindings int) *Store {
 // to prevent unbounded map growth.
 func (s *Store) Add(f Finding) bool {
 	if len(f.Value) > MaxValueLen {
-		f.Value = f.Value[:MaxValueLen] + "..."
+		// strings.Clone ensures truncation doesn't pin the original.
+		f.Value = strings.Clone(f.Value[:MaxValueLen]) + "..."
 	}
 	if len(f.Context) > MaxContextLen {
-		f.Context = f.Context[:MaxContextLen] + "..."
+		f.Context = strings.Clone(f.Context[:MaxContextLen]) + "..."
 	}
 
 	s.mu.Lock()

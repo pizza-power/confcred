@@ -7,6 +7,9 @@ import (
 	"confcred/internal/findings"
 )
 
+// clone breaks the substring reference so the original backing array can be GC'd.
+func clone(s string) string { return strings.Clone(s) }
+
 const contextRadius = 100
 
 type MatchResult struct {
@@ -21,6 +24,7 @@ const maxMatchesPerPattern = 50 // avoid regex explosion on noisy pages
 
 // Scan runs all compiled patterns against the given text and returns matches.
 // inCodeBlock boosts confidence when the match was found inside a code/preformatted context.
+// All returned strings are cloned to avoid pinning the input text in memory.
 func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResult {
 	var results []MatchResult
 
@@ -32,7 +36,9 @@ func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResu
 				continue
 			}
 
-			ctx := extractContext(text, loc[0], loc[1])
+			// Clone both value and context to prevent pinning the entire
+			// input text (up to 5MB) via substring references.
+			ctx := clone(extractContext(text, loc[0], loc[1]))
 			confidence := baseConfidence(p.Severity) + p.ConfidenceBoost
 			if inCodeBlock {
 				confidence += 20
@@ -43,7 +49,7 @@ func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResu
 
 			results = append(results, MatchResult{
 				Pattern:    p.Name,
-				Value:      value,
+				Value:      clone(value),
 				Context:    ctx,
 				Severity:   p.Severity,
 				Confidence: confidence,
