@@ -7,10 +7,10 @@ import (
 )
 
 type SearchResult struct {
-	Results []PageResult `json:"results"`
-	Start   int          `json:"start"`
-	Limit   int          `json:"limit"`
-	Size    int          `json:"size"`
+	Results []PageListEntry `json:"results"`
+	Start   int             `json:"start"`
+	Limit   int             `json:"limit"`
+	Size    int             `json:"size"`
 	Links   struct {
 		Next string `json:"next"`
 	} `json:"_links"`
@@ -59,7 +59,7 @@ func (p PageResult) ToStub() PageStub {
 // It paginates automatically and stops after maxPages stubs have been sent (0 = no limit).
 func (c *Client) SearchCQL(ctx context.Context, cql string, maxPages int, pages chan<- PageStub) (int, error) {
 	start := 0
-	pageSize := 25
+	pageSize := 10 // keep batches small to limit decoder buffer size
 	sent := 0
 
 	for {
@@ -77,17 +77,18 @@ func (c *Client) SearchCQL(ctx context.Context, cql string, maxPages int, pages 
 			return sent, fmt.Errorf("search CQL (start=%d): %w", start, err)
 		}
 
-		for _, r := range result.Results {
+		for i := range result.Results {
 			select {
 			case <-ctx.Done():
 				return sent, ctx.Err()
-			case pages <- r.ToStub():
+			case pages <- result.Results[i].ToStub():
 				sent++
 			}
 			if maxPages > 0 && sent >= maxPages {
 				return sent, nil
 			}
 		}
+		result.Results = nil
 
 		c.log.Info("search page fetched", "returned", result.Size, "total_so_far", sent)
 

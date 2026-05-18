@@ -6,11 +6,36 @@ import (
 	"net/url"
 )
 
+// PageListEntry is a lightweight struct for listing/search responses.
+// It deliberately OMITS Body fields so the JSON decoder never allocates
+// memory for page content that we didn't ask for but the server may return.
+type PageListEntry struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Title string `json:"title"`
+	Space struct {
+		Key  string `json:"key"`
+		Name string `json:"name"`
+	} `json:"space"`
+	Links struct {
+		WebUI string `json:"webui"`
+	} `json:"_links"`
+}
+
+func (p PageListEntry) ToStub() PageStub {
+	return PageStub{
+		ID:       p.ID,
+		Title:    p.Title,
+		SpaceKey: p.Space.Key,
+		WebUI:    p.Links.WebUI,
+	}
+}
+
 type PageListResult struct {
-	Results []PageResult `json:"results"`
-	Start   int          `json:"start"`
-	Limit   int          `json:"limit"`
-	Size    int          `json:"size"`
+	Results []PageListEntry `json:"results"`
+	Start   int             `json:"start"`
+	Limit   int             `json:"limit"`
+	Size    int             `json:"size"`
 	Links   struct {
 		Next string `json:"next"`
 	} `json:"_links"`
@@ -32,7 +57,7 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (*PageResult, error
 // remaining is how many more pages we're allowed to send (0 = unlimited). Returns pages sent.
 func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<- PageStub, remaining int) (int, error) {
 	start := 0
-	pageSize := 25
+	pageSize := 10 // keep batches small to limit decoder buffer size
 	sent := 0
 
 	for {
@@ -51,17 +76,19 @@ func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<
 			return sent, fmt.Errorf("list pages in %s (start=%d): %w", spaceKey, start, err)
 		}
 
-		for _, p := range result.Results {
+		for i := range result.Results {
 			select {
 			case <-ctx.Done():
 				return sent, ctx.Err()
-			case pages <- p.ToStub():
+			case pages <- result.Results[i].ToStub():
 				sent++
 			}
 			if remaining > 0 && sent >= remaining {
 				return sent, nil
 			}
 		}
+		// Explicitly clear the results slice so bodies (if present) can be freed.
+		result.Results = nil
 
 		c.log.Debug("space page batch", "space", spaceKey, "returned", result.Size, "start", start)
 

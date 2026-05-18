@@ -116,8 +116,12 @@ func (c *Client) do(ctx context.Context, method, path string) (*http.Response, e
 	return resp, nil
 }
 
+// maxListResponseBytes caps all non-page JSON responses (listings, search results, etc.)
+// to prevent surprise body content from blowing up memory.
+const maxListResponseBytes = 50 * 1024 * 1024 // 50MB for any API listing response
+
 func (c *Client) getJSON(ctx context.Context, path string, target interface{}) error {
-	return c.getJSONLimited(ctx, path, target, 0)
+	return c.getJSONLimited(ctx, path, target, maxListResponseBytes)
 }
 
 // getJSONLimited decodes a JSON response with an optional size cap.

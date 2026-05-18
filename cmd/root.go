@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strings"
 	"time"
@@ -69,6 +71,13 @@ Two modes:
 			return fmt.Errorf("init logging: %w", err)
 		}
 
+		// Start pprof server for live heap profiling.
+		// Access heap profile at: http://localhost:6060/debug/pprof/heap
+		go func() {
+			fmt.Fprintf(os.Stderr, "  [pprof] listening on http://localhost:6060/debug/pprof/\n")
+			http.ListenAndServe("localhost:6060", nil)
+		}()
+
 		return nil
 	},
 }
@@ -84,7 +93,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagPass, "pass", "", "Basic auth password (overrides CONFLUENCE_PASS env)")
 	rootCmd.PersistentFlags().StringVar(&flagSpaces, "spaces", "", "Comma-separated space keys to include")
 	rootCmd.PersistentFlags().StringVar(&flagExcludeSpaces, "exclude-spaces", "", "Comma-separated space keys to exclude")
-	rootCmd.PersistentFlags().IntVar(&flagWorkers, "workers", 3, "Number of concurrent page fetch workers")
+	rootCmd.PersistentFlags().IntVar(&flagWorkers, "workers", 1, "Number of concurrent page fetch workers")
 	rootCmd.PersistentFlags().Float64Var(&flagRateLimit, "rate-limit", 10, "Max API requests per second")
 	rootCmd.PersistentFlags().Int64Var(&flagMaxAttachSize, "max-attachment-size", 10*1024*1024, "Max attachment size in bytes to download (default 10MB)")
 	rootCmd.PersistentFlags().Int64Var(&flagMaxMemory, "max-memory", 512*1024*1024, "Max memory budget for in-flight attachment processing (default 512MB, accounts for PDF expansion)")

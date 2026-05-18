@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -320,11 +321,14 @@ func newTicker(seconds int) *time.Ticker {
 	return time.NewTicker(time.Duration(seconds) * time.Second)
 }
 
+var heapProfileDumped atomic.Bool
+
 func logMemStats(log *slog.Logger, stats *ScanStats) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+	heapMB := m.HeapAlloc / 1024 / 1024
 	log.Info("memory stats",
-		"heap_alloc_mb", m.HeapAlloc/1024/1024,
+		"heap_alloc_mb", heapMB,
 		"heap_sys_mb", m.HeapSys/1024/1024,
 		"heap_inuse_mb", m.HeapInuse/1024/1024,
 		"heap_released_mb", m.HeapReleased/1024/1024,
@@ -333,8 +337,29 @@ func logMemStats(log *slog.Logger, stats *ScanStats) {
 		"gc_cycles", m.NumGC,
 	)
 	fmt.Fprintf(os.Stderr, "  [mem] heap=%dMB sys=%dMB goroutines=%d pages=%d\n",
-		m.HeapAlloc/1024/1024, m.HeapSys/1024/1024,
+		heapMB, m.HeapSys/1024/1024,
 		runtime.NumGoroutine(), stats.PagesScanned.Load())
+
+	// Auto-dump heap profile when memory exceeds 1GB for diagnosis.
+	if heapMB > 1024 && heapProfileDumped.CompareAndSwap(false, true) {
+		dumpHeapProfile()
+	}
+}
+
+func dumpHeapProfile() {
+	f, err := os.Create("heap_profile.pb.gz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [mem] WARNING: failed to create heap profile: %v\n", err)
+		return
+	}
+	defer f.Close()
+	runtime.GC()
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		fmt.Fprintf(os.Stderr, "  [mem] WARNING: failed to write heap profile: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "  [mem] *** HEAP PROFILE DUMPED to heap_profile.pb.gz ***\n")
+	fmt.Fprintf(os.Stderr, "  [mem] Analyze with: go tool pprof heap_profile.pb.gz\n")
 }
 
 func stripHTML(s string) string {
