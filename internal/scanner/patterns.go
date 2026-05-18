@@ -111,7 +111,8 @@ func DefaultPatterns() []CompiledPattern {
 		{Name: "Generic Secret Assignment", Regex: `(?i)(?:secret|secret_key|secretkey)\s*[:=]\s*["']?[^\s"']{8,}["']?`, Severity: "medium", ConfidenceBoost: 0},
 		{Name: "Generic API Key Assignment", Regex: `(?i)(?:api_key|apikey|api-key)\s*[:=]\s*["']?[^\s"']{16,}["']?`, Severity: "medium", ConfidenceBoost: 0},
 		{Name: "Generic Token Assignment", Regex: `(?i)(?:token|auth_token|access_token)\s*[:=]\s*["']?[^\s"']{16,}["']?`, Severity: "medium", ConfidenceBoost: 0},
-		{Name: "Bearer Token", Regex: `(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*`, Severity: "medium", ConfidenceBoost: 10},
+		{Name: "Bearer JWT", Regex: `(?i)bearer\s+[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}`, Severity: "high", ConfidenceBoost: 25},
+		{Name: "Bearer Token", Regex: `(?i)bearer\s+[A-Za-z0-9\-._~+/]{30,}=*`, Severity: "medium", ConfidenceBoost: 5},
 
 		// Hashes (potential stored passwords)
 		{Name: "Bcrypt Hash", Regex: `\$2[aby]?\$\d{2}\$[./A-Za-z0-9]{53}`, Severity: "low", ConfidenceBoost: 10},

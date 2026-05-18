@@ -104,10 +104,14 @@ patterns:
     regex: '(?i)(?:token|auth_token|access_token)\s*[:=]\s*["'']?[^\s"'']{16,}["'']?'
     severity: medium
     confidence_boost: 0
+  - name: "Bearer JWT"
+    regex: '(?i)bearer\s+[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}\.[A-Za-z0-9\-_]{20,}'
+    severity: high
+    confidence_boost: 25
   - name: "Bearer Token"
-    regex: '(?i)bearer\s+[A-Za-z0-9\-._~+/]+=*'
+    regex: '(?i)bearer\s+[A-Za-z0-9\-._~+/]{30,}=*'
     severity: medium
-    confidence_boost: 10
+    confidence_boost: 5
 
   # Hashes
   - name: "Bcrypt Hash"

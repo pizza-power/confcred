@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"confcred/internal/confluence"
 	"confcred/internal/findings"
@@ -19,10 +22,10 @@ import (
 )
 
 func init() {
-	// GOGC=50 makes GC run more frequently, trading CPU for lower peak RSS.
-	debug.SetGCPercent(50)
-	// Soft heap limit — keeps the GC aggressive but won't prevent necessary allocs.
-	debug.SetMemoryLimit(4 * 1024 * 1024 * 1024) // 4GB
+	// GOGC=20 makes GC run very frequently — aggressive but necessary to keep RSS low.
+	debug.SetGCPercent(20)
+	// Soft heap limit — keeps the GC aggressive about reclaiming.
+	debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2GB
 }
 
 type ScanStats struct {
@@ -46,6 +49,20 @@ func scanPages(
 	log := logging.Get()
 	attachMem := semaphore.NewWeighted(flagMaxMemory)
 	var wg sync.WaitGroup
+
+	// Periodically log memory stats so we can observe growth.
+	go func() {
+		ticker := newTicker(30)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				logMemStats(log, stats)
+			}
+		}
+	}()
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -157,8 +174,9 @@ func processPage(
 	bodyText = ""
 	matches = nil
 
-	// Hint to the runtime that we just freed significant memory.
-	runtime.GC()
+	// Force GC AND return free pages to the OS immediately.
+	// runtime.GC() alone doesn't reduce RSS — FreeOSMemory does both.
+	debug.FreeOSMemory()
 
 	if ctx.Err() != nil {
 		return
@@ -166,6 +184,14 @@ func processPage(
 
 	scanAttachments(ctx, client, stub.ID, patterns, store, writer, stats, loc, log, attachMem)
 }
+
+// pdfMemoryMultiplier accounts for the fact that the PDF library internally
+// decompresses streams, allocating far more than the file size.
+const pdfMemoryMultiplier = 10
+
+// pdfGate serializes PDF parsing — only one PDF at a time because the
+// library's internal allocations are massive and unpredictable.
+var pdfGate = semaphore.NewWeighted(1)
 
 func scanAttachments(
 	ctx context.Context,
@@ -206,13 +232,29 @@ func scanAttachments(
 			continue
 		}
 
-		if err := attachMem.Acquire(ctx, fileSize); err != nil {
+		// For PDFs, account for the library's internal memory explosion.
+		isPDF := strings.HasSuffix(strings.ToLower(att.Title), ".pdf")
+		memWeight := fileSize
+		if isPDF {
+			memWeight = fileSize * pdfMemoryMultiplier
+		}
+		// Clamp to semaphore capacity so we don't deadlock on one huge file.
+		if memWeight > flagMaxMemory {
+			log.Debug("skipping attachment (estimated memory exceeds budget)",
+				"file", att.Title,
+				"estimated", memWeight,
+				"budget", flagMaxMemory,
+			)
+			continue
+		}
+
+		if err := attachMem.Acquire(ctx, memWeight); err != nil {
 			return
 		}
 
 		data, err := client.DownloadAttachment(ctx, att.Links.Download, flagMaxAttachSize)
 		if err != nil {
-			attachMem.Release(fileSize)
+			attachMem.Release(memWeight)
 			log.Warn("download attachment failed", "file", att.Title, "error", err)
 			continue
 		}
@@ -223,11 +265,22 @@ func scanAttachments(
 		case strings.HasSuffix(lower, ".docx"):
 			text, err = parser.ExtractDOCX(data)
 		case strings.HasSuffix(lower, ".pdf"):
+			// Serialize PDF parsing — the library allocates enormous internal state.
+			if pdfErr := pdfGate.Acquire(ctx, 1); pdfErr != nil {
+				data = nil
+				attachMem.Release(memWeight)
+				return
+			}
 			text, err = parser.ExtractPDF(data)
+			pdfGate.Release(1)
 		}
 
+		// Immediately drop the raw file data and release the semaphore.
 		data = nil
-		attachMem.Release(fileSize)
+		attachMem.Release(memWeight)
+
+		// Force return memory to OS after each attachment parse.
+		debug.FreeOSMemory()
 
 		if err != nil {
 			log.Warn("parse attachment failed", "file", att.Title, "error", err)
@@ -241,6 +294,7 @@ func scanAttachments(
 		loc.Attachment = att.Title
 
 		matches := scanner.Scan(patterns, text, false)
+		text = ""
 		for _, m := range matches {
 			f := scanner.ToFinding(m, loc)
 			if store.Add(f) {
@@ -260,6 +314,27 @@ func scanAttachments(
 			}
 		}
 	}
+}
+
+func newTicker(seconds int) *time.Ticker {
+	return time.NewTicker(time.Duration(seconds) * time.Second)
+}
+
+func logMemStats(log *slog.Logger, stats *ScanStats) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	log.Info("memory stats",
+		"heap_alloc_mb", m.HeapAlloc/1024/1024,
+		"heap_sys_mb", m.HeapSys/1024/1024,
+		"heap_inuse_mb", m.HeapInuse/1024/1024,
+		"heap_released_mb", m.HeapReleased/1024/1024,
+		"goroutines", runtime.NumGoroutine(),
+		"pages_scanned", stats.PagesScanned.Load(),
+		"gc_cycles", m.NumGC,
+	)
+	fmt.Fprintf(os.Stderr, "  [mem] heap=%dMB sys=%dMB goroutines=%d pages=%d\n",
+		m.HeapAlloc/1024/1024, m.HeapSys/1024/1024,
+		runtime.NumGoroutine(), stats.PagesScanned.Load())
 }
 
 func stripHTML(s string) string {

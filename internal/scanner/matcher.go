@@ -25,6 +25,7 @@ const maxMatchesPerPattern = 50 // avoid regex explosion on noisy pages
 // Scan runs all compiled patterns against the given text and returns matches.
 // inCodeBlock boosts confidence when the match was found inside a code/preformatted context.
 // All returned strings are cloned to avoid pinning the input text in memory.
+// Matches are filtered for entropy, placeholder words, and documentation context.
 func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResult {
 	var results []MatchResult
 
@@ -42,6 +43,15 @@ func Scan(patterns []CompiledPattern, text string, inCodeBlock bool) []MatchResu
 			confidence := baseConfidence(p.Severity) + p.ConfidenceBoost
 			if inCodeBlock {
 				confidence += 20
+			}
+
+			// Apply false-positive filters: entropy, placeholders, context.
+			penalty := applyFilters(value, ctx)
+			confidence -= penalty
+
+			// Drop matches that fall below minimum confidence after filtering.
+			if confidence <= 0 {
+				continue
 			}
 			if confidence > 100 {
 				confidence = 100
