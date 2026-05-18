@@ -83,7 +83,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 		log.Info("using default patterns", "count", len(patterns))
 	}
 
-	store := findings.NewStore()
+	store := findings.NewStore(0)
 	stats := &ScanStats{}
 
 	writer, err := findings.NewJSONLWriter(flagOutput)
@@ -123,13 +123,24 @@ func runAll(cmd *cobra.Command, args []string) error {
 	go func() {
 		defer producerWg.Done()
 		defer close(pages)
+		totalSent := 0
 		for _, space := range spaces {
 			if ctx.Err() != nil {
 				return
 			}
+			remaining := 0
+			if flagMaxPages > 0 {
+				remaining = flagMaxPages - totalSent
+				if remaining <= 0 {
+					log.Info("max-pages reached, stopping enumeration", "max", flagMaxPages)
+					return
+				}
+			}
 			log.Info("crawling space", "space", space.Key, "name", space.Name)
 			fmt.Printf("Crawling space: %s (%s)\n", space.Key, space.Name)
-			if err := client.GetSpacePages(ctx, space.Key, pages); err != nil {
+			sent, err := client.GetSpacePages(ctx, space.Key, pages, remaining)
+			totalSent += sent
+			if err != nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -148,7 +159,7 @@ func runAll(cmd *cobra.Command, args []string) error {
 	findings.PrintSummary(store, pagesCount, attachCount, elapsed)
 
 	if flagReport != "" {
-		if err := findings.WriteHTMLReport(flagReport, store, pagesCount, attachCount, elapsed); err != nil {
+		if err := findings.WriteHTMLReport(flagReport, flagOutput, store, pagesCount, attachCount, elapsed); err != nil {
 			log.Error("write HTML report", "error", err)
 		} else {
 			fmt.Printf("  Report written to %s\n", flagReport)

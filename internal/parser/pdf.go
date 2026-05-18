@@ -9,7 +9,7 @@ import (
 )
 
 // ExtractPDF reads a PDF file from memory and returns its plain text content.
-// No temporary files are written to disk.
+// No temporary files are written to disk. Output is capped at 10MB.
 func ExtractPDF(data []byte) (string, error) {
 	reader := bytes.NewReader(data)
 	pdfReader, err := pdf.NewReader(reader, int64(len(data)))
@@ -35,11 +35,18 @@ func ExtractPDF(data []byte) (string, error) {
 		}
 		b.WriteString(text)
 		b.WriteString("\n")
+
+		if b.Len() > maxExtractedBytes {
+			break
+		}
 	}
 
 	result := strings.TrimSpace(b.String())
 	if result == "" {
 		return "", fmt.Errorf("no extractable text in pdf")
+	}
+	if len(result) > maxExtractedBytes {
+		result = result[:maxExtractedBytes]
 	}
 	return result, nil
 }

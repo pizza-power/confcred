@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,7 +47,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	client := newConfluenceClient()
 	patterns := scanner.DefaultPatterns()
-	store := findings.NewStore()
+	store := findings.NewStore(0)
 	stats := &ScanStats{}
 
 	writer, err := findings.NewJSONLWriter(flagOutput)
@@ -66,22 +67,24 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Info("executing CQL", "cql", cql)
+	fmt.Printf("Searching and scanning (max %d pages)...\n\n", flagMaxPages)
 
-	stubs, err := client.SearchCQL(ctx, cql, 0)
-	if err != nil {
-		return fmt.Errorf("search failed: %w", err)
-	}
+	pages := make(chan confluence.PageStub, 100)
 
-	log.Info("search returned pages", "count", len(stubs))
-	fmt.Printf("Found %d pages matching query, scanning...\n\n", len(stubs))
-
-	pages := make(chan confluence.PageStub, len(stubs))
-	for _, s := range stubs {
-		pages <- s
-	}
-	close(pages)
+	var producerWg sync.WaitGroup
+	producerWg.Add(1)
+	go func() {
+		defer producerWg.Done()
+		defer close(pages)
+		sent, err := client.SearchCQL(ctx, cql, flagMaxPages, pages)
+		if err != nil && ctx.Err() == nil {
+			log.Error("search failed", "error", err)
+		}
+		log.Info("search complete", "pages_found", sent)
+	}()
 
 	scanPages(ctx, client, pages, patterns, store, writer, stats, flagWorkers)
+	producerWg.Wait()
 
 	elapsed := time.Since(start)
 	pagesCount := int(stats.PagesScanned.Load())
@@ -90,7 +93,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	findings.PrintSummary(store, pagesCount, attachCount, elapsed)
 
 	if flagReport != "" {
-		if err := findings.WriteHTMLReport(flagReport, store, pagesCount, attachCount, elapsed); err != nil {
+		if err := findings.WriteHTMLReport(flagReport, flagOutput, store, pagesCount, attachCount, elapsed); err != nil {
 			log.Error("write HTML report", "error", err)
 		} else {
 			fmt.Printf("  Report written to %s\n", flagReport)

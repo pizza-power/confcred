@@ -43,40 +43,70 @@ func GenerateID(pattern, value, pageID, source, attachment string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }
 
+const (
+	MaxValueLen   = 200
+	MaxContextLen = 300
+)
+
 type Store struct {
-	mu       sync.Mutex
-	seen     map[string]struct{}
-	findings []Finding
+	mu          sync.Mutex
+	seen        map[string]struct{}
+	findings    []Finding
+	maxFindings int
+	capped      bool
 }
 
-func NewStore() *Store {
+func NewStore(maxFindings int) *Store {
+	if maxFindings <= 0 {
+		maxFindings = 100000
+	}
 	return &Store{
-		seen:     make(map[string]struct{}),
-		findings: make([]Finding, 0),
+		seen:        make(map[string]struct{}),
+		findings:    make([]Finding, 0),
+		maxFindings: maxFindings,
 	}
 }
 
 // Add returns true if the finding was new and added, false if duplicate.
+// Findings are truncated at ingestion to bound memory. After MaxFindings is
+// reached, dedup still works but findings are no longer stored in memory
+// (they should still be written to the JSONL file by the caller).
 func (s *Store) Add(f Finding) bool {
+	if len(f.Value) > MaxValueLen {
+		f.Value = f.Value[:MaxValueLen] + "..."
+	}
+	if len(f.Context) > MaxContextLen {
+		f.Context = f.Context[:MaxContextLen] + "..."
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.seen[f.ID]; exists {
 		return false
 	}
 	s.seen[f.ID] = struct{}{}
-	s.findings = append(s.findings, f)
+	if len(s.findings) < s.maxFindings {
+		s.findings = append(s.findings, f)
+	} else if !s.capped {
+		s.capped = true
+	}
 	return true
 }
 
-func (s *Store) All() []Finding {
+// Capped returns true if the in-memory store hit its cap.
+func (s *Store) Capped() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]Finding, len(s.findings))
-	copy(out, s.findings)
-	return out
+	return s.capped
 }
 
 func (s *Store) Count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.seen)
+}
+
+func (s *Store) StoredCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.findings)

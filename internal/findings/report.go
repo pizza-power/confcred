@@ -1,6 +1,7 @@
 package findings
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -21,13 +22,20 @@ type ReportData struct {
 	FindingsJSON      template.JS
 }
 
-func WriteHTMLReport(path string, store *Store, pagesScanned, attachmentsParsed int, elapsed time.Duration) error {
-	all := store.All()
-	counts := store.CountBySeverity()
-
-	data, err := json.Marshal(all)
+// WriteHTMLReport reads findings from the JSONL file on disk (not memory) to
+// avoid duplicating the entire findings set in RAM during report generation.
+func WriteHTMLReport(path string, jsonlPath string, store *Store, pagesScanned, attachmentsParsed int, elapsed time.Duration) error {
+	// Read findings from the JSONL file to avoid loading everything from the store.
+	findingsJSON, totalFindings, counts, err := readFindingsFromJSONL(jsonlPath)
 	if err != nil {
-		return fmt.Errorf("marshal findings: %w", err)
+		return fmt.Errorf("read findings for report: %w", err)
+	}
+
+	// Fall back to store counts if JSONL was empty (e.g. no findings).
+	if totalFindings == 0 {
+		counts = store.CountBySeverity()
+		totalFindings = store.Count()
+		findingsJSON = []byte("[]")
 	}
 
 	rd := ReportData{
@@ -35,12 +43,12 @@ func WriteHTMLReport(path string, store *Store, pagesScanned, attachmentsParsed 
 		PagesScanned:      pagesScanned,
 		AttachmentsParsed: attachmentsParsed,
 		Duration:          elapsed.Round(time.Second).String(),
-		TotalFindings:     len(all),
+		TotalFindings:     totalFindings,
 		Critical:          counts[SeverityCritical],
 		High:              counts[SeverityHigh],
 		Medium:            counts[SeverityMedium],
 		Low:               counts[SeverityLow],
-		FindingsJSON:      template.JS(data),
+		FindingsJSON:      template.JS(findingsJSON),
 	}
 
 	f, err := os.Create(path)
@@ -50,6 +58,42 @@ func WriteHTMLReport(path string, store *Store, pagesScanned, attachmentsParsed 
 	defer f.Close()
 
 	return reportTmpl.Execute(f, rd)
+}
+
+func readFindingsFromJSONL(path string) ([]byte, int, map[Severity]int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer f.Close()
+
+	var allFindings []json.RawMessage
+	counts := make(map[Severity]int)
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 10*1024*1024)
+
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		allFindings = append(allFindings, append(json.RawMessage{}, line...))
+
+		var partial struct {
+			Severity Severity `json:"severity"`
+		}
+		json.Unmarshal(line, &partial)
+		counts[partial.Severity]++
+	}
+	if err := sc.Err(); err != nil {
+		return nil, 0, nil, err
+	}
+
+	data, err := json.Marshal(allFindings)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	return data, len(allFindings), counts, nil
 }
 
 var reportTmpl = template.Must(template.New("report").Parse(`<!DOCTYPE html>

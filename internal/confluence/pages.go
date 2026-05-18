@@ -28,14 +28,16 @@ func (c *Client) GetPage(ctx context.Context, pageID string) (*PageResult, error
 
 // GetSpacePages paginates through all pages in a space, sending lightweight stubs to the channel.
 // Bodies are NOT fetched here — workers fetch them on demand to control memory.
-func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<- PageStub) error {
+// remaining is how many more pages we're allowed to send (0 = unlimited). Returns pages sent.
+func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<- PageStub, remaining int) (int, error) {
 	start := 0
 	pageSize := 25
+	sent := 0
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return sent, ctx.Err()
 		default:
 		}
 
@@ -45,14 +47,18 @@ func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<
 
 		var result PageListResult
 		if err := c.getJSON(ctx, path, &result); err != nil {
-			return fmt.Errorf("list pages in %s (start=%d): %w", spaceKey, start, err)
+			return sent, fmt.Errorf("list pages in %s (start=%d): %w", spaceKey, start, err)
 		}
 
 		for _, p := range result.Results {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return sent, ctx.Err()
 			case pages <- p.ToStub():
+				sent++
+			}
+			if remaining > 0 && sent >= remaining {
+				return sent, nil
 			}
 		}
 
@@ -64,5 +70,5 @@ func (c *Client) GetSpacePages(ctx context.Context, spaceKey string, pages chan<
 		start += result.Size
 	}
 
-	return nil
+	return sent, nil
 }

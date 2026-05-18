@@ -27,6 +27,7 @@ var (
 	flagOutput           string
 	flagLogFile          string
 	flagReport           string
+	flagMaxPages         int
 	flagVerbose          bool
 	flagInsecure         bool
 )
@@ -89,6 +90,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagOutput, "output", "findings.jsonl", "Output file path for JSONL findings")
 	rootCmd.PersistentFlags().StringVar(&flagLogFile, "log-file", "confcred.log", "Log file path")
 	rootCmd.PersistentFlags().StringVar(&flagReport, "report", "report.html", "HTML report output path")
+	rootCmd.PersistentFlags().IntVar(&flagMaxPages, "max-pages", 10000, "Max pages to process (0 = unlimited)")
 	rootCmd.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "Enable debug-level logging")
 	rootCmd.PersistentFlags().BoolVar(&flagInsecure, "insecure", false, "Skip TLS certificate verification")
 }

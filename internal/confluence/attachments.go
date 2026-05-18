@@ -52,9 +52,9 @@ func (c *Client) GetAttachments(ctx context.Context, pageID string) ([]Attachmen
 	return all, nil
 }
 
-// DownloadAttachment downloads the attachment content into memory.
-func (c *Client) DownloadAttachment(ctx context.Context, downloadPath string) ([]byte, error) {
-	data, _, err := c.getRaw(ctx, downloadPath)
+// DownloadAttachment downloads the attachment content into memory, capped at maxBytes.
+func (c *Client) DownloadAttachment(ctx context.Context, downloadPath string, maxBytes int64) ([]byte, error) {
+	data, _, err := c.getRaw(ctx, downloadPath, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("download attachment: %w", err)
 	}

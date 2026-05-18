@@ -103,14 +103,17 @@ func processPage(
 		return
 	}
 
-	bodyHTML := page.Body.Storage.Value
+	// Force-copy to break reference to the JSON decoder's backing array.
+	bodyHTML := strings.Clone(page.Body.Storage.Value)
+	page = nil
+
 	bodyText := stripHTML(bodyHTML)
 	inCodeBlock := strings.Contains(bodyHTML, "<ac:structured-macro ac:name=\"code\"") ||
 		strings.Contains(bodyHTML, "<pre>") ||
 		strings.Contains(bodyHTML, "<code>")
 
-	// Drop the raw HTML reference now that we have the stripped text.
-	page = nil
+	// Done with raw HTML — release it.
+	bodyHTML = ""
 
 	matches := scanner.Scan(patterns, bodyText, inCodeBlock)
 	for _, m := range matches {
@@ -132,6 +135,10 @@ func processPage(
 			)
 		}
 	}
+
+	// Release body text before attachment scanning — no longer needed.
+	bodyText = ""
+	matches = nil
 
 	if ctx.Err() != nil {
 		return
@@ -183,7 +190,7 @@ func scanAttachments(
 			return
 		}
 
-		data, err := client.DownloadAttachment(ctx, att.Links.Download)
+		data, err := client.DownloadAttachment(ctx, att.Links.Download, flagMaxAttachSize)
 		if err != nil {
 			attachMem.Release(fileSize)
 			log.Warn("download attachment failed", "file", att.Title, "error", err)

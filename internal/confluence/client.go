@@ -120,16 +120,21 @@ func (c *Client) getJSON(ctx context.Context, path string, target interface{}) e
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-func (c *Client) getRaw(ctx context.Context, path string) ([]byte, string, error) {
+func (c *Client) getRaw(ctx context.Context, path string, maxBytes int64) ([]byte, string, error) {
 	resp, err := c.do(ctx, http.MethodGet, path)
 	if err != nil {
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	// Hard-cap how much we read regardless of what the server sends.
+	reader := io.LimitReader(resp.Body, maxBytes+1)
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, "", fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, "", fmt.Errorf("response body exceeds max size (%d bytes)", maxBytes)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
 }

@@ -55,38 +55,47 @@ func (p PageResult) ToStub() PageStub {
 	}
 }
 
-// SearchCQL performs a CQL search and returns lightweight page stubs, handling pagination.
-// Bodies are NOT fetched here — workers fetch them on demand to control memory.
-func (c *Client) SearchCQL(ctx context.Context, cql string, limit int) ([]PageStub, error) {
-	var all []PageStub
+// SearchCQL streams page stubs matching the CQL query into the provided channel.
+// It paginates automatically and stops after maxPages stubs have been sent (0 = no limit).
+func (c *Client) SearchCQL(ctx context.Context, cql string, maxPages int, pages chan<- PageStub) (int, error) {
 	start := 0
 	pageSize := 25
-	if limit > 0 && limit < pageSize {
-		pageSize = limit
-	}
+	sent := 0
 
 	for {
+		select {
+		case <-ctx.Done():
+			return sent, ctx.Err()
+		default:
+		}
+
 		path := fmt.Sprintf("/rest/api/content/search?cql=%s&start=%d&limit=%d&expand=space",
 			url.QueryEscape(cql), start, pageSize)
 
 		var result SearchResult
 		if err := c.getJSON(ctx, path, &result); err != nil {
-			return all, fmt.Errorf("search CQL (start=%d): %w", start, err)
+			return sent, fmt.Errorf("search CQL (start=%d): %w", start, err)
 		}
 
 		for _, r := range result.Results {
-			all = append(all, r.ToStub())
+			select {
+			case <-ctx.Done():
+				return sent, ctx.Err()
+			case pages <- r.ToStub():
+				sent++
+			}
+			if maxPages > 0 && sent >= maxPages {
+				return sent, nil
+			}
 		}
-		c.log.Info("search page fetched", "returned", result.Size, "total_so_far", len(all))
+
+		c.log.Info("search page fetched", "returned", result.Size, "total_so_far", sent)
 
 		if result.Size < pageSize || result.Links.Next == "" {
-			break
-		}
-		if limit > 0 && len(all) >= limit {
 			break
 		}
 		start += result.Size
 	}
 
-	return all, nil
+	return sent, nil
 }
